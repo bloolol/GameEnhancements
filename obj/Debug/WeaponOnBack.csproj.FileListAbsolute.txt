@@ -1,0 +1,15 @@
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\bin\Debug\WeaponOnBack.dll
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\bin\Debug\WeaponOnBack.pdb
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\bin\Debug\ScriptHookVDotNet3.dll
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.csproj.AssemblyReference.cache
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.csproj.CoreCompileInputs.cache
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.dll
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.pdb
+C:\Users\Chris-No Internet\source\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOn.679F64C8.Up2Date
+C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\bin\Debug\WeaponOnBack.dll
+C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\bin\Debug\WeaponOnBack.pdb
+C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.csproj.AssemblyReference.cache
+C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.csproj.CoreCompileInputs.cache
+C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOn.679F64C8.Up2Date
+C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.dll
+C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\WeaponOnBack.pdb
