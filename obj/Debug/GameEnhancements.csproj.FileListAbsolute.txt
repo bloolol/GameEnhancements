@@ -5,3 +5,10 @@ C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\De
 C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnha.C9192A8F.Up2Date
 C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnhancements.dll
 C:\Users\clope\Downloads\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnhancements.pdb
+C:\Users\clope\OneDrive\Documents\GTA V Modding\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\bin\Debug\GameEnhancements.dll
+C:\Users\clope\OneDrive\Documents\GTA V Modding\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\bin\Debug\GameEnhancements.pdb
+C:\Users\clope\OneDrive\Documents\GTA V Modding\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnhancements.csproj.AssemblyReference.cache
+C:\Users\clope\OneDrive\Documents\GTA V Modding\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnhancements.csproj.CoreCompileInputs.cache
+C:\Users\clope\OneDrive\Documents\GTA V Modding\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnha.C9192A8F.Up2Date
+C:\Users\clope\OneDrive\Documents\GTA V Modding\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnhancements.dll
+C:\Users\clope\OneDrive\Documents\GTA V Modding\repos\repos\GTAV_CorrectProjectType\WeaponOnBack\obj\Debug\GameEnhancements.pdb

@@ -2,6 +2,7 @@
 using GTA;
 using GTA.Math;
 using GTA.Native;
+using GTA.UI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -26,6 +27,30 @@ public class Main : Script
     public bool onthree = false;
     bool SlowMotoggle = false;
     bool SlowMotoggle2 = false;
+    //
+
+    private List<Entity> droppedWeapons = new List<Entity>();
+    private Dictionary<Entity, WeaponProperties> weaponProperties = new Dictionary<Entity, WeaponProperties>();
+    private Entity closestDroppedWeapon = (Entity)null;
+    private Entity weaponToAttach = (Entity)null;
+
+
+    
+    public static bool IsCarryingWeaponAsProp;
+    private bool isCarryingWeaponAsProp = false;
+    private WeaponProperties storedWeaponProps = (WeaponProperties)null;
+    private Entity carriedWeaponEntity = (Entity)null;
+    //public static Weapon current = null;
+
+
+    private static readonly HashSet<int> TargetInteriorIDs = new HashSet<int>
+{
+    62978, 94978, 37122, 34818, 30722, 80386,
+    115458, 35586, 29698, 59138, 48130
+};
+
+
+    //
     private int[,] CharacterClothes = new int[3, 3]
     {
     {
@@ -67,7 +92,9 @@ public class Main : Script
 
     private void OnTick(object sender, EventArgs e)
     {
-        this.VisibleWeaponFunc();
+        
+        ///visibleWeapon2();
+       // this.VisibleWeaponFunc();
         this.RagDollWeaponDrop();
         this.RemoveWeaponsWhenDead();
         this.ShowVisibleArmor();
@@ -77,6 +104,8 @@ public class Main : Script
         this.SlowMo();
         this.noHealthRegeneration();
         this.GiveWeaponToOthers();
+       // this.Hint();
+        this.weaponPickupTick();
     }
     public static int GetMeleeCount(Ped ped)
     {
@@ -276,7 +305,7 @@ public class Main : Script
 
     private void WeaponsAreScary()
     {
-        if (Function.Call<bool>(Hash.GET_MISSION_FLAG, Array.Empty<InputArgument>()) || !Game.Player.IsPlaying || !Main.PED_IS_ARMED(Game.Player.Character) || Main.PED_IS_POLICE_FORCE(Game.Player.Character) || !Main.WEAPON_IS_FIREARM(Game.Player.Character.Weapons.Current.Hash) || Game.Player.Character.IsInVehicle())
+        if (Function.Call<bool>(Hash.GET_MISSION_FLAG, Array.Empty<InputArgument>()) || !Game.Player.IsPlaying || (!this.isCarryingWeaponAsProp || IsPlayerInTargetInterior()) || !Main.PED_IS_ARMED(Game.Player.Character) || !carriedWeaponEntity.Exists() || Main.PED_IS_POLICE_FORCE(Game.Player.Character) || !Main.WEAPON_IS_FIREARM(Game.Player.Character.Weapons.Current.Hash) || Game.Player.Character.IsInVehicle())
             return;
         foreach (Ped ped in ((IEnumerable<Ped>)World.GetNearbyPeds(Game.Player.Character, 13f)).ToList<Ped>().ToArray())
         {
@@ -345,25 +374,429 @@ public class Main : Script
     {
        
         this.Tick += new EventHandler(this.OnTick);
-        this.KeyDown += new KeyEventHandler(this.DropWeapon);
+        this.KeyDown += new KeyEventHandler(this.DropWeapon2);
+        this.KeyDown += new KeyEventHandler(this.AttemptPickupWeapon2);
     }
 
     private void DropWeapon(object sender, KeyEventArgs e)
     {
         if (e.KeyCode != Keys.K)
             return;
+        int ammo;
+        ammo = Game.Player.Character.Weapons.Current.Ammo;
+       // Function.Call(Hash.TASK_PLAY_ANIM, (InputArgument)Game.Player.Character, (InputArgument)"anim@heists@narcotics@trash", (InputArgument)"drop_side", (InputArgument)4f, (InputArgument) (- 4f), (InputArgument)2000, (InputArgument)(Enum)AnimationFlags.UpperBodyOnly, (InputArgument)8, (InputArgument)0.2f, (InputArgument)false, (InputArgument)false, (InputArgument)false);
+
         Function.Call(Hash.SET_PED_DROPS_INVENTORY_WEAPON, new InputArgument[6]
         {
       (InputArgument) (Entity) Game.Player.Character,
       (InputArgument) (int) Game.Player.Character.Weapons.Current.Hash,
-      (InputArgument) 1.4,
-      (InputArgument) 0.7,
+      (InputArgument) 0.1,
+      (InputArgument) 0.1,
       (InputArgument)(-0.1),
-      (InputArgument) 1
+      (InputArgument) ammo
         });
     }
 
-   
+    private void RequestWeaponAsset(WeaponHash hash)
+    {
+        Function.Call(Hash.REQUEST_WEAPON_ASSET, (InputArgument)(int)hash, (InputArgument)31, (InputArgument)0);
+        int gameTime = Game.GameTime;
+        while (!Function.Call<bool>(Hash.HAS_WEAPON_ASSET_LOADED, (InputArgument)(int)hash))
+        {
+            Script.Yield();
+            if (Game.GameTime - gameTime > 5000)
+            {
+                Notification.PostTicker("~r~Timed out loading weapon asset: " + hash.ToString(), true, false);
+                break;
+            }
+        }
+    }
+    private WeaponProperties GetWeaponProperties(Weapon weapon)
+    {
+        WeaponProperties weaponProperties = new WeaponProperties()
+        {
+            Hash = weapon.Hash,
+            Ammo = weapon.Ammo,
+            TintIndex = Function.Call<int>(Hash.GET_PED_WEAPON_TINT_INDEX, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)weapon.Hash),
+            Components = new List<WeaponComponentHash>()
+        };
+        foreach (WeaponComponent component in weapon.Components)
+        {
+            if (component.Active)
+            {
+                weaponProperties.Components.Add(component.ComponentHash);
+                string str = component.ComponentHash.ToString();
+                if (str.Contains("VARMOD_") || str.Contains("CAMO"))
+                    weaponProperties.Finish = (int)component.ComponentHash;
+            }
+        }
+        return weaponProperties;
+    }
+    private Entity GetClosestDroppedWeapon(Vector3 playerPos, float maxDist)
+    {
+        Entity closestDroppedWeapon = (Entity)null;
+        float num1 = maxDist;
+        foreach (Entity droppedWeapon in this.droppedWeapons)
+        {
+            if (droppedWeapon != (Entity)null && droppedWeapon.Exists())
+            {
+                float num2 = playerPos.DistanceTo(droppedWeapon.Position);
+                if ((double)num2 < (double)num1)
+                {
+                    closestDroppedWeapon = droppedWeapon;
+                    num1 = num2;
+                }
+            }
+        }
+        return closestDroppedWeapon;
+    }
+
+    private void GiveWeaponToPlayer(WeaponProperties properties)
+    {
+        this.RequestWeaponAsset(properties.Hash);
+        Function.Call(Hash.GIVE_WEAPON_TO_PED, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)properties.Hash, (InputArgument)properties.Ammo, (InputArgument)false, (InputArgument)true);
+        Function.Call(Hash.SET_PED_WEAPON_TINT_INDEX, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)properties.Hash, (InputArgument)properties.TintIndex);
+        foreach (WeaponComponentHash component in properties.Components)
+            Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)properties.Hash, (InputArgument)(int)component);
+        if (properties.Finish != 0)
+            Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)properties.Hash, (InputArgument)properties.Finish);
+        Function.Call(Hash.SET_PED_AMMO, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)properties.Hash, (InputArgument)properties.Ammo);
+        Game.Player.Character.Weapons.Select(properties.Hash);
+    }
+
+    private void Hint()
+    {
+
+        if (this.closestDroppedWeapon == (Entity)null || !this.closestDroppedWeapon.Exists())
+            return;
+        if ((double)Game.Player.Character.Position.DistanceTo(this.closestDroppedWeapon.Position) <= 1.3300000429153442)
+        GTA.UI.Screen.ShowHelpTextThisFrame("~BLIP_INFO_ICON~  ~" + "E" + "~ Pick Up Weapon", true);
+    }
+
+    private void DropWeapon2(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode != Keys.K)
+            return;
+        Ped character = Game.Player.Character;
+        Weapon current = character.Weapons.Current;
+        if (current == null || current.Hash == WeaponHash.Unarmed)
+            return;
+        Function.Call(Hash.REQUEST_ANIM_DICT, (InputArgument)"anim@heists@narcotics@trash");
+        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, (InputArgument)"anim@heists@narcotics@trash"))
+            Script.Wait(50);
+        WeaponProperties weaponProperties = this.GetWeaponProperties(current);
+        Function.Call(Hash.TASK_PLAY_ANIM, (InputArgument)character.Handle, (InputArgument)"anim@heists@narcotics@trash", (InputArgument)"drop_side", (InputArgument)4f, (InputArgument) (- 4f), (InputArgument)2000, (InputArgument)(Enum)AnimationFlags.UpperBodyOnly, (InputArgument)8, (InputArgument)0.2f, (InputArgument)false, (InputArgument)false, (InputArgument)false);
+       // Script.Wait(0);
+        Entity entity = Function.Call<Entity>(Hash.GET_CURRENT_PED_WEAPON_ENTITY_INDEX, (InputArgument)(Entity)character, (InputArgument)(int)current.Hash);
+        if (entity != (Entity)null && entity.Exists())
+        {
+            Vector3 position = entity.Position;
+            Vector3 rotation = entity.Rotation;
+            this.RequestWeaponAsset(weaponProperties.Hash);
+            Entity key = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)weaponProperties.Hash, (InputArgument)1, (InputArgument)position.X, (InputArgument)position.Y, (InputArgument)position.Z, (InputArgument)true, (InputArgument)1f, (InputArgument)0);
+            if (key == (Entity)null || !key.Exists())
+                return;
+            Function.Call(Hash.SET_ENTITY_ROTATION, (InputArgument)key.Handle, (InputArgument)rotation.X, (InputArgument)rotation.Y, (InputArgument)rotation.Z, (InputArgument)2, (InputArgument)true);
+            Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)key.Handle, (InputArgument)weaponProperties.TintIndex);
+            foreach (WeaponComponentHash component in weaponProperties.Components)
+                Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)key.Handle, (InputArgument)(int)component);
+            if (weaponProperties.Finish != 0)
+                Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)key.Handle, (InputArgument)weaponProperties.Finish);
+            Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)key.Handle, (InputArgument)weaponProperties.TintIndex);
+            Function.Call(Hash.SET_ENTITY_DYNAMIC, (InputArgument)key.Handle, (InputArgument)true);
+            Vector3 forwardVector = character.ForwardVector;
+            Vector3 vector3 = new Vector3(forwardVector.X * 2f, forwardVector.Y * 2f, 2f);
+            Function.Call(Hash.APPLY_FORCE_TO_ENTITY, (InputArgument)key.Handle, (InputArgument)1, (InputArgument)vector3.X, (InputArgument)vector3.Y, (InputArgument)vector3.Z, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0, (InputArgument)false, (InputArgument)true, (InputArgument)true, (InputArgument)false, (InputArgument)true);
+            Function.Call(Hash.SET_ENTITY_HAS_GRAVITY, (InputArgument)key.Handle, (InputArgument)true);
+            this.droppedWeapons.Add(key);
+            this.weaponProperties[key] = weaponProperties;
+        }
+        character.Weapons.Select(WeaponHash.Unarmed);
+        character.Task.ClearAll();
+        character.Weapons.Remove(current);
+    }
+
+    private void DropWeapon3()
+    {
+        
+        Ped character = Game.Player.Character;
+        Weapon current = character.Weapons.Current;
+        if (current == null || current.Hash == WeaponHash.Unarmed)
+            return;
+        Function.Call(Hash.REQUEST_ANIM_DICT, (InputArgument)"anim@heists@narcotics@trash");
+        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, (InputArgument)"anim@heists@narcotics@trash"))
+            Script.Wait(50);
+        WeaponProperties weaponProperties = this.GetWeaponProperties(current);
+        Function.Call(Hash.TASK_PLAY_ANIM, (InputArgument)character.Handle, (InputArgument)"anim@heists@narcotics@trash", (InputArgument)"drop_side", (InputArgument)4f, (InputArgument)(-4f), (InputArgument)2000, (InputArgument)(Enum)AnimationFlags.UpperBodyOnly, (InputArgument)8, (InputArgument)0.2f, (InputArgument)false, (InputArgument)false, (InputArgument)false);
+        // Script.Wait(0);
+        Entity entity = Function.Call<Entity>(Hash.GET_CURRENT_PED_WEAPON_ENTITY_INDEX, (InputArgument)(Entity)character, (InputArgument)(int)current.Hash);
+        if (entity != (Entity)null && entity.Exists())
+        {
+            Vector3 position = entity.Position;
+            Vector3 rotation = entity.Rotation;
+            this.RequestWeaponAsset(weaponProperties.Hash);
+            Entity key = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)weaponProperties.Hash, (InputArgument)1, (InputArgument)position.X, (InputArgument)position.Y, (InputArgument)position.Z, (InputArgument)true, (InputArgument)1f, (InputArgument)0);
+            if (key == (Entity)null || !key.Exists())
+                return;
+            Function.Call(Hash.SET_ENTITY_ROTATION, (InputArgument)key.Handle, (InputArgument)rotation.X, (InputArgument)rotation.Y, (InputArgument)rotation.Z, (InputArgument)2, (InputArgument)true);
+            Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)key.Handle, (InputArgument)weaponProperties.TintIndex);
+            foreach (WeaponComponentHash component in weaponProperties.Components)
+                Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)key.Handle, (InputArgument)(int)component);
+            if (weaponProperties.Finish != 0)
+                Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)key.Handle, (InputArgument)weaponProperties.Finish);
+            Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)key.Handle, (InputArgument)weaponProperties.TintIndex);
+            Function.Call(Hash.SET_ENTITY_DYNAMIC, (InputArgument)key.Handle, (InputArgument)true);
+            Vector3 forwardVector = character.ForwardVector;
+            Vector3 vector3 = new Vector3(forwardVector.X * 2f, forwardVector.Y * 2f, 2f);
+            Function.Call(Hash.APPLY_FORCE_TO_ENTITY, (InputArgument)key.Handle, (InputArgument)1, (InputArgument)vector3.X, (InputArgument)vector3.Y, (InputArgument)vector3.Z, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0, (InputArgument)false, (InputArgument)true, (InputArgument)true, (InputArgument)false, (InputArgument)true);
+            Function.Call(Hash.SET_ENTITY_HAS_GRAVITY, (InputArgument)key.Handle, (InputArgument)true);
+            this.droppedWeapons.Add(key);
+            this.weaponProperties[key] = weaponProperties;
+        }
+        
+        //character.Weapons.Select(WeaponHash.Unarmed);
+        character.Task.ClearAll();
+        character.Weapons.Remove(current);
+    }
+    private void RagdollDrop()
+    {
+
+        Ped character = Game.Player.Character;
+        Weapon current = character.Weapons.Current;
+        if (current == null || current.Hash == WeaponHash.Unarmed)
+            return;
+        WeaponProperties weaponProperties = this.GetWeaponProperties(current);
+        Entity entity = Function.Call<Entity>(Hash.GET_CURRENT_PED_WEAPON_ENTITY_INDEX, (InputArgument)(Entity)character, (InputArgument)(int)current.Hash);
+        if (entity != (Entity)null && entity.Exists())
+        {
+            Vector3 position = entity.Position;
+            Vector3 rotation = entity.Rotation;
+            this.RequestWeaponAsset(weaponProperties.Hash);
+            Entity key = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)weaponProperties.Hash, (InputArgument)1, (InputArgument)position.X, (InputArgument)position.Y, (InputArgument)position.Z, (InputArgument)true, (InputArgument)1f, (InputArgument)0);
+            if (key == (Entity)null || !key.Exists())
+                return;
+            Function.Call(Hash.SET_ENTITY_ROTATION, (InputArgument)key.Handle, (InputArgument)rotation.X, (InputArgument)rotation.Y, (InputArgument)rotation.Z, (InputArgument)2, (InputArgument)true);
+            Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)key.Handle, (InputArgument)weaponProperties.TintIndex);
+            foreach (WeaponComponentHash component in weaponProperties.Components)
+                Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)key.Handle, (InputArgument)(int)component);
+            if (weaponProperties.Finish != 0)
+                Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)key.Handle, (InputArgument)weaponProperties.Finish);
+            Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)key.Handle, (InputArgument)weaponProperties.TintIndex);
+            Function.Call(Hash.SET_ENTITY_DYNAMIC, (InputArgument)key.Handle, (InputArgument)true);
+            Vector3 forwardVector = character.ForwardVector;
+            Vector3 vector3 = new Vector3(forwardVector.X * 0f, forwardVector.Y * 2f, 0f);
+            Function.Call(Hash.APPLY_FORCE_TO_ENTITY, (InputArgument)key.Handle, (InputArgument)1, (InputArgument)vector3.X, (InputArgument)vector3.Y, (InputArgument)vector3.Z, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0, (InputArgument)false, (InputArgument)true, (InputArgument)true, (InputArgument)false, (InputArgument)true);
+            Function.Call(Hash.SET_ENTITY_HAS_GRAVITY, (InputArgument)key.Handle, (InputArgument)true);
+            this.droppedWeapons.Add(key);
+            this.weaponProperties[key] = weaponProperties;
+        }
+
+        //character.Weapons.Select(WeaponHash.Unarmed);
+        character.Task.ClearAll();
+        character.Weapons.Remove(current);
+    }
+
+
+
+    private void AttemptPickupWeapon2(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode != Keys.E || !Game.Player.Character.IsOnFoot || Game.IsControlPressed(GTA.Control.Sprint) || (GetBigWeaponCount(Game.Player.Character) > 0 && Game.Player.Character.Weapons.Current == WeaponHash.Unarmed))
+            return;
+        Entity closestDroppedWeapon = this.GetClosestDroppedWeapon(Game.Player.Character.Position, 3f);
+        if (closestDroppedWeapon == (Entity)null || !this.weaponProperties.ContainsKey(closestDroppedWeapon))
+        {
+            GTA.UI.Screen.ShowSubtitle("No weapon or NPC nearby to pick up.", 2000);
+        }
+        else
+        {
+            if (Game.Player.Character.Weapons.Current != null || Main.GetBigWeaponCount(Game.Player.Character) >= 2)
+                this.DropWeapon3();
+            this.weaponToAttach = closestDroppedWeapon;
+            float num1 = this.weaponToAttach.Position.Z - Function.Call<Vector3>(Hash.GET_PED_BONE_COORDS, (InputArgument)(Entity)Game.Player.Character, (InputArgument)24816, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0.0f).Z;
+            float num2 = 0.5f;
+            float num3 = 0.3353f;
+            if ((double)num1 < -(double)num2)
+                this.PlayPickupAnimation(Game.Player.Character);
+            else if ((double)num1 > (double)num3)
+                this.PlayHighPickupAnimation(Game.Player.Character);
+            else
+                this.PlayMidPickupAnimation(Game.Player.Character);
+        }
+    }
+
+
+    private void weaponPickupTick()
+    {
+        if (this.weaponToAttach != (Entity)null)
+        {
+            WeaponProperties weaponProperty = this.weaponProperties[this.weaponToAttach];
+            this.GiveWeaponToPlayer(weaponProperty);
+            this.droppedWeapons.Remove(this.weaponToAttach);
+            this.weaponProperties.Remove(this.weaponToAttach);
+            this.weaponToAttach.Delete();
+            this.weaponToAttach = (Entity)null;
+            Game.Player.Character.Task.ClearAll();
+        }
+        if (AllWeaponsCount(Game.Player.Character) > 1)
+        {
+                DropWeapon3();
+        }
+        if (GetBigWeaponCount(Game.Player.Character) > 0 && Game.Player.Character.Armor == 0 && Game.Player.Character.Weapons.Current != WeaponHash.Unarmed && !IsPlayerInTargetInterior())
+        {
+
+            //Function.Call(Hash.SET_CAN_PED_SELECT_INVENTORY_WEAPON, (InputArgument)Game.Player.Character, (InputArgument)WeaponHash.Unarmed, (InputArgument)false);
+           // Game.Player.Character.CanSwitchWeapons = false;
+        }
+        else
+        {
+          // Game.Player.Character.CanSwitchWeapons = true;
+           // Function.Call(Hash.SET_CAN_PED_SELECT_INVENTORY_WEAPON, (InputArgument)Game.Player.Character, (InputArgument)WeaponHash.Unarmed, (InputArgument)true);
+        }
+            //if (!Game.Player.Character.IsAlive && weaponToAttach != null)
+        //    this.weaponToAttach = (Entity)null;
+
+        if (Function.Call<bool>(Hash.IS_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character))
+            Function.Call(Hash.SET_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character, (InputArgument)false, (InputArgument)(-1), (InputArgument)"DEFAULT_ACTION");
+
+        // if(!IsPlayerInTargetInterior() && Game.Player.Character.Armor == 0)
+        // SwitchToFirstAvailableWeaponIfUnarmed(preferredWeapons);
+
+        if (GetBigWeaponCount(Game.Player.Character) > 0)
+            {
+                if (!Game.IsControlJustPressed(GTA.Control.Context))
+                {
+                    Script.Wait(50);
+                }
+                if
+                (!Function.Call<bool>(Hash.IS_PED_ARMED, (InputArgument)(Entity)Game.Player.Character, (InputArgument)7) || Game.Player.Character.Weapons.Current == WeaponHash.Unarmed)
+                {
+                    if (!Game.Player.Character.IsInVehicle() || !Function.Call<bool>(Hash.IS_PED_GETTING_INTO_A_VEHICLE, (InputArgument)Game.Player.Character))
+                        ToggleCarryModeOn();
+                }
+                else
+                {
+
+                    ToggleCarryModeOff();
+                }
+
+            }
+
+        
+        else if (this.isCarryingWeaponAsProp)
+            ToggleCarryModeOff();
+
+        //if (IsPlayerInTargetInterior())
+          //  ToggleCarryModeOn();
+
+        if (Game.Player.Character.IsInVehicle() || !Game.Player.Character.IsAlive)
+            ToggleCarryModeOff();
+
+
+
+
+
+        /*     if (Game.Player.Character.Weapons.Current.Ammo > 0 && Game.Player.Character.Weapons.Current.Hash != WeaponHash.Unarmed)
+             {
+                 Weapon blue = Game.Player.Character.Weapons.Current;
+                 if (blue.Ammo == 0)
+                 {
+                     SwitchToWeaponIfUnarmed(blue);
+                 }
+             }*/
+        //   int interiorID = Function.Call<int>(Hash.GET_INTERIOR_FROM_ENTITY, Game.Player.Character);
+        //   GTA.UI.Screen.ShowSubtitle("Current Interior ID: " + interiorID);
+
+
+    }
+
+    private void addComponents()
+    {
+
+        Weapon current = Game.Player.Character.Weapons.Current;
+        if (current == null || current.Hash == WeaponHash.Unarmed)
+            return;
+        this.storedWeaponProps = new WeaponProperties()
+        {
+            Hash = current.Hash,
+            Ammo = current.Ammo,
+            TintIndex = Function.Call<int>(Hash.GET_PED_WEAPON_TINT_INDEX, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)current.Hash)
+        };
+        foreach (WeaponComponent component in current.Components)
+        {
+            if (component.Active)
+                this.storedWeaponProps.Components.Add(component.ComponentHash);
+        }
+    }
+
+    public static void SwitchToFirstAvailableWeaponIfUnarmed(List<WeaponHash> weaponList)
+    {
+        Ped player = Game.Player.Character;
+        if (player == null || !player.Exists()) return;
+
+        // Check if player is currently unarmed
+        if (player.Weapons.Current.Hash != WeaponHash.Unarmed) return;
+
+        foreach (WeaponHash weapon in weaponList)
+        {
+            if (player.Weapons.HasWeapon(weapon))
+            {
+                player.Weapons.Select(weapon);
+               GTA.UI.Screen.ShowSubtitle("Switched to: " + weapon.ToString());
+                return;
+            }
+        }
+
+        GTA.UI.Screen.ShowSubtitle("No weapons from list found in inventory.");
+    }
+
+
+    public static bool IsPlayerInTargetInterior()
+    {
+        int currentInterior = InteriorUtils.GetPlayerInteriorID();
+        return TargetInteriorIDs.Contains(currentInterior);
+    }
+
+
+    private void PlayPickupAnimation(Ped playerPed)
+    {
+        Function.Call(Hash.REQUEST_ANIM_DICT, (InputArgument)"amb@medic@standing@kneel@base");
+        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, (InputArgument)"amb@medic@standing@kneel@base"))
+            Script.Wait(10);
+        Function.Call(Hash.TASK_PLAY_ANIM, (InputArgument)playerPed.Handle, (InputArgument)"amb@medic@standing@kneel@base", (InputArgument)"base", (InputArgument)4f, (InputArgument) (- 4f), (InputArgument)2500, (InputArgument)(Enum)AnimationFlags.Loop, (InputArgument)0.2f, (InputArgument)false, (InputArgument)false, (InputArgument)true);
+        Function.Call(Hash.REQUEST_ANIM_DICT, (InputArgument)"anim@move_m@trash");
+        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, (InputArgument)"anim@move_m@trash"))
+            Script.Wait(10);
+        Script.Wait(300);
+        if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)playerPed.Handle, (InputArgument)"anim@move_m@trash", (InputArgument)"pickup", (InputArgument)3))
+
+            Function.Call(Hash.TASK_PLAY_ANIM, (InputArgument)playerPed.Handle, (InputArgument)"anim@move_m@trash", (InputArgument)"pickup", (InputArgument)8f, (InputArgument)(-8f), (InputArgument)1000, (InputArgument)(Enum)(AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary), (InputArgument)0.3f, (InputArgument)false, (InputArgument)false, (InputArgument)true);
+        //this.kneelStartTime = Game.GameTime;
+    }
+
+    private void PlayMidPickupAnimation(Ped playerPed)
+    {
+        string str = "anim@scripted@player@freemode@gen_grab@male@";
+        Function.Call(Hash.REQUEST_ANIM_DICT, (InputArgument)str);
+        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, (InputArgument)str))
+            Script.Wait(10);
+        if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)playerPed.Handle, (InputArgument)str, (InputArgument)"medrh", (InputArgument)3))
+
+            Function.Call(Hash.TASK_PLAY_ANIM, (InputArgument)playerPed.Handle, (InputArgument)str, (InputArgument)"med_rh", (InputArgument)4f, (InputArgument)(-4f), (InputArgument)1500, (InputArgument)(Enum)(AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary), (InputArgument)0.3f, (InputArgument)false, (InputArgument)false, (InputArgument)true);
+        Script.Wait(300);
+    }
+
+    private void PlayHighPickupAnimation(Ped playerPed)
+    {
+        string str = "anim@scripted@player@freemode@gen_grab@male@";
+        Function.Call(Hash.REQUEST_ANIM_DICT, (InputArgument)str);
+        while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, (InputArgument)str))
+            Script.Wait(10);
+        if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)playerPed.Handle, (InputArgument)str, (InputArgument)"high_rh", (InputArgument)3))
+
+            Function.Call(Hash.TASK_PLAY_ANIM, (InputArgument)playerPed.Handle, (InputArgument)str, (InputArgument)"high_rh", (InputArgument)4f, (InputArgument)(-4f), (InputArgument)1500, (InputArgument)(Enum)(AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary), (InputArgument)0.3f, (InputArgument)false, (InputArgument)false, (InputArgument)true);
+        Script.Wait(300);
+    }
+
 
     private void HurtScreenFX()
     {
@@ -549,8 +982,207 @@ public class Main : Script
         }
     }
 
+    private void ToggleCarryModeOn()
+    {
+        if (Function.Call<bool>(Hash.IS_PED_GETTING_INTO_A_VEHICLE, (InputArgument)Game.Player.Character) || Game.Player.Character.IsInVehicle())
+        return;
+        Ped character = Game.Player.Character;
+        if (!this.isCarryingWeaponAsProp)
+        {
+            Weapon current3 = character.Weapons.Current;
+            WeaponHash current = character.Weapons.Current;
+            foreach (Main.BigWeapons bigWeapons in Enum.GetValues(typeof(Main.BigWeapons)))
+            {
+                if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, new InputArgument[3]
+                {
+            (InputArgument) (Entity) Game.Player.Character,
+            (InputArgument) bigWeapons.GetHashCode(),
+            (InputArgument) false
+                }))
+                {
+                   current  = (WeaponHash)bigWeapons.GetHashCode();
+                    current3 = character.Weapons[current];
+                    break;
+                }
+            }
+                    
+            if (current3 == null || current3 == WeaponHash.Unarmed)
+                return;
+            
+            
+            this.storedWeaponProps = new WeaponProperties()
+            {
+                Hash = current3.Hash,
+                Ammo = current3.Ammo,
+                TintIndex = Function.Call<int>(Hash.GET_PED_WEAPON_TINT_INDEX, (InputArgument)character.Handle, (InputArgument)(int)current3.Hash)
+            };
+            foreach (WeaponComponent component in current3.Components)
+            {
+                if (component.Active)
+                    this.storedWeaponProps.Components.Add(component.ComponentHash);
+            }
+            //character.Weapons.Remove(current.Hash);
+            character.Weapons.Select(WeaponHash.Unarmed);
+            this.carriedWeaponEntity = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)character.Position.X, (InputArgument)character.Position.Y, (InputArgument)(character.Position.Z + 0.2f), (InputArgument)true, (InputArgument)0.0f, (InputArgument)0);
+            if (this.carriedWeaponEntity == (Entity)null || !this.carriedWeaponEntity.Exists())
+            {
+                Notification.PostTicker("Failed to create carried weapon prop.", true, false);
+            }
+            else 
+            {
+                Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)this.storedWeaponProps.TintIndex);
+                foreach (int component in this.storedWeaponProps.Components)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)component);
+                int num = Function.Call<int>(Hash.GET_PED_BONE_INDEX, (InputArgument)character.Handle, (InputArgument)18905);
+                if (Game.Player.Character.Armor == 0)
+                    Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)character.Handle, (InputArgument)num, (InputArgument)0.15f, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)(-110f), (InputArgument)(-50f), (InputArgument)0.0f, (InputArgument)false, (InputArgument)false, (InputArgument)false, (InputArgument)false, (InputArgument)2, (InputArgument)true);
+                else
+                {
+                    int num2 = Function.Call<int>(Hash.GET_PED_BONE_INDEX, new InputArgument[2]
+                {
+          (InputArgument) (Entity) Game.Player.Character,
+          (InputArgument) (Enum) Bone.SkelSpine3
+                });
+                    Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
+                        {
+            (InputArgument) (InputArgument) this.carriedWeaponEntity,
+            (InputArgument) (InputArgument) character.Handle,
+            (InputArgument) num2,
+            (InputArgument) 0.075f,
+            (InputArgument)(0.235f),
+            (InputArgument)(-0.02f),
+            (InputArgument) 0.0f,
+            (InputArgument) 165f,
+            (InputArgument) 0.0f,
+            (InputArgument) true,
+            (InputArgument) true,
+            (InputArgument) false,
+            (InputArgument) true,
+            (InputArgument) 2,
+            (InputArgument) true
+                        });
+                    }
+                this.isCarryingWeaponAsProp = true;
+                IsCarryingWeaponAsProp = true;
+                
+                Notification.PostTicker("~r~Weapon~w~ is now in ~b~C~r~a~y~r~w~r~g~y~b~ M~g~o~y~d~b~e.", true, false);
+            }
+        }
+    }
 
 
+    private void ToggleCarryModeOff()
+    {
+        Ped character = Game.Player.Character;
+        if (this.isCarryingWeaponAsProp)
+        {
+
+            if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+            {
+                Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                this.carriedWeaponEntity.Delete();
+            }
+            if (this.storedWeaponProps != null)
+            {
+                /*
+                this.RequestWeaponAssetInternal(this.storedWeaponProps.Hash);
+                Function.Call(Hash.GIVE_WEAPON_TO_PED, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)false, (InputArgument)true);
+                Function.Call(Hash.SET_PED_WEAPON_TINT_INDEX, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.TintIndex);
+                foreach (WeaponComponentHash component in this.storedWeaponProps.Components)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)(int)component);
+                if (this.storedWeaponProps.Finish != 0)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Finish);
+                Function.Call(Hash.SET_PED_AMMO, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo);
+                */
+                //character.Weapons.Select(this.storedWeaponProps.Hash);
+            }
+            this.isCarryingWeaponAsProp = false;
+            IsCarryingWeaponAsProp = false;
+            if (Game.Player.Character.IsAlive || !Game.Player.Character.IsInVehicle())
+            Notification.PostTicker("~r~Weapon~w~ re-equipped ~b~n~r~o~y~r~w~m~g~a~y~l~w~l~r~y~b~.", true, false);
+            
+
+        }
+    }
+
+
+    private void ToggleCarryMode()
+    {
+        Ped character = Game.Player.Character;
+        if (!this.isCarryingWeaponAsProp)
+        {
+            Weapon current = character.Weapons.Current;
+            if (current == null || current.Hash == WeaponHash.Unarmed)
+                return;
+            this.storedWeaponProps = new WeaponProperties()
+            {
+                Hash = current.Hash,
+                Ammo = current.Ammo,
+                TintIndex = Function.Call<int>(Hash.GET_PED_WEAPON_TINT_INDEX, (InputArgument)character.Handle, (InputArgument)(int)current.Hash)
+            };
+            foreach (WeaponComponent component in current.Components)
+            {
+                if (component.Active)
+                    this.storedWeaponProps.Components.Add(component.ComponentHash);
+            }
+            //character.Weapons.Remove(current.Hash);
+            character.Weapons.Select(WeaponHash.Unarmed);
+            this.carriedWeaponEntity = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)character.Position.X, (InputArgument)character.Position.Y, (InputArgument)(character.Position.Z + 0.2f), (InputArgument)true, (InputArgument)0.0f, (InputArgument)0);
+            if (this.carriedWeaponEntity == (Entity)null || !this.carriedWeaponEntity.Exists())
+            {
+                Notification.PostTicker("Failed to create carried weapon prop.", true, false);
+            }
+            else
+            {
+                Function.Call(Hash.SET_WEAPON_OBJECT_TINT_INDEX, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)this.storedWeaponProps.TintIndex);
+                foreach (int component in this.storedWeaponProps.Components)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)component);
+                int num = Function.Call<int>(Hash.GET_PED_BONE_INDEX, (InputArgument)character.Handle, (InputArgument)18905);
+                Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)character.Handle, (InputArgument)num, (InputArgument)0.15f, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument) (- 110f), (InputArgument)(-50f), (InputArgument)0.0f, (InputArgument)false, (InputArgument)false, (InputArgument)false, (InputArgument)false, (InputArgument)2, (InputArgument)true);
+                this.isCarryingWeaponAsProp = true;
+                IsCarryingWeaponAsProp = true;
+                Notification.PostTicker("Weapon is now in Carry Mode.", true, false);
+            }
+        }
+        else
+        {
+            if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+            {
+                Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                this.carriedWeaponEntity.Delete();
+            }
+            if (this.storedWeaponProps != null)
+            {
+                /*
+                this.RequestWeaponAssetInternal(this.storedWeaponProps.Hash);
+                Function.Call(Hash.GIVE_WEAPON_TO_PED, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)false, (InputArgument)true);
+                Function.Call(Hash.SET_PED_WEAPON_TINT_INDEX, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.TintIndex);
+                foreach (WeaponComponentHash component in this.storedWeaponProps.Components)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)(int)component);
+                if (this.storedWeaponProps.Finish != 0)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Finish);
+                Function.Call(Hash.SET_PED_AMMO, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo);
+                */
+                character.Weapons.Select(this.storedWeaponProps.Hash);
+            }
+            this.isCarryingWeaponAsProp = false;
+            IsCarryingWeaponAsProp = false;
+            Notification.PostTicker("Weapon re‑equipped normally.", true, false);
+        }
+    }
+
+    private void RequestWeaponAssetInternal(WeaponHash hash)
+    {
+        Function.Call(Hash.REQUEST_WEAPON_ASSET, (InputArgument)(int)hash, (InputArgument)31, (InputArgument)0);
+        int gameTime = Game.GameTime;
+        while (!Function.Call<bool>(Hash.HAS_WEAPON_ASSET_LOADED, (InputArgument)(int)hash))
+        {
+            Script.Yield();
+            if (Game.GameTime - gameTime > 5000)
+                break;
+        }
+    }
+    /*
     private void VisibleWeaponFunc()
     {
         int num1;
@@ -567,9 +1199,34 @@ public class Main : Script
             Main.model = Game.Player.Character.Weapons.Current.Model;
             this.current1 = Game.Player.Character.Weapons.CurrentWeaponObject;
             this.attached = !this.current1.IsVisible;
-            if (this.attached && !this.on && Main.GetBigWeaponCount(Game.Player.Character) >= 1)
+
+            Weapon current = Game.Player.Character.Weapons.Current;
+
+            this.storedWeaponProps = new WeaponProperties()
             {
-                this.WeaponOnBack = World.CreateProp(Main.model, Game.Player.Character.Position, false, false);
+                Hash = current.Hash,
+                Ammo = current.Ammo,
+                TintIndex = Function.Call<int>(Hash.GET_PED_WEAPON_TINT_INDEX, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)current.Hash)
+            };
+            foreach (WeaponComponent component in current.Components)
+            {
+                if (component.Active)
+                    this.storedWeaponProps.Components.Add(component.ComponentHash);
+            }
+
+        
+
+                if (this.attached && !this.on && Main.GetBigWeaponCount(Game.Player.Character) >= 1 && !Game.Player.IsDead)
+            {
+               // this.WeaponOnBack = World.CreateProp(Main.model, Game.Player.Character.Position, false, false);
+
+
+                this.carriedWeaponEntity = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)Game.Player.Character.Position.X, (InputArgument)Game.Player.Character.Position.Y, (InputArgument)(Game.Player.Character.Position.Z + 0.2f), (InputArgument)true, (InputArgument)0.0f, (InputArgument)0);
+
+                foreach (int component in this.storedWeaponProps.Components)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)carriedWeaponEntity.Handle, (InputArgument)component);
+
+
                 int num2 = Function.Call<int>(Hash.GET_PED_BONE_INDEX, new InputArgument[2]
                 {
           (InputArgument) (Entity) Game.Player.Character,
@@ -578,7 +1235,7 @@ public class Main : Script
                 if (Game.Player.Character.Armor < 1)
                     Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
                     {
-            (InputArgument) (Entity) this.WeaponOnBack,
+            (InputArgument) (Entity) this.carriedWeaponEntity,
             (InputArgument) (Entity) Game.Player.Character,
             (InputArgument) num2,
             (InputArgument) 0.075f,
@@ -597,7 +1254,7 @@ public class Main : Script
                 else if (Game.Player.Character.Armor > 0)
                     Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
                     {
-            (InputArgument) (Entity) this.WeaponOnBack,
+            (InputArgument) (Entity) this.carriedWeaponEntity,
             (InputArgument) (Entity) Game.Player.Character,
             (InputArgument) num2,
             (InputArgument) 0.075f,
@@ -619,11 +1276,21 @@ public class Main : Script
             {
                 if (this.attached || Main.GetBigWeaponCount(Game.Player.Character) < 1 || (Game.Player.Character.IsClimbing || Game.Player.Character.IsVaulting || Game.Player.Character.IsSwimmingUnderWater || Game.Player.Character.IsSwimming || Game.Player.Character.IsGettingIntoVehicle || Game.Player.Character.IsJacking || !this.on) && (!Game.Player.Character.IsFalling && !Game.Player.Character.IsRagdoll || !this.on))
                     return;
-                this.WeaponOnBack.Delete();
-                this.WeaponOnBack = (Prop)null;
+                if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+
+                    Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary | AnimationFlags.HideWeapon);
+                Script.Wait(500);
+                //  this.WeaponOnBack.Delete();
+                //  this.WeaponOnBack = (Prop)null;
+                //if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+             //   {
+                  //  Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                  //  this.carriedWeaponEntity.Delete();
+             //   }
+                //this.carriedWeaponEntity = (Entity)null;
                 this.on = false;
-                Main.model = (Model)(string)null;
-                Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
+                //Main.model = (Model)(string)null;
+                //Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
             }
         }
         else
@@ -658,12 +1325,22 @@ public class Main : Script
                         break;
                     }
                 }
-                if (this.attached && !this.on && Main.GetBigWeaponCount(Game.Player.Character) >= 1)
+                if (this.attached && !this.on && Main.GetBigWeaponCount(Game.Player.Character) >= 1 && !Game.Player.Character.IsDead)
                 {
-                    this.WeaponOnBack = World.CreateProp(Function.Call<Model>(Hash.GET_WEAPONTYPE_MODEL, new InputArgument[1]
-                    {
-            (InputArgument) this.current
-                    }), Game.Player.Character.Position, false, false);
+                    if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+                    Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
+                    Script.Wait(500);
+                   // this.WeaponOnBack = World.CreateProp(Function.Call<Model>(Hash.GET_WEAPONTYPE_MODEL, new InputArgument[1]
+                //    {
+          //  (InputArgument) this.current
+          //          }), Game.Player.Character.Position, false, false);
+
+                    this.carriedWeaponEntity = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)Game.Player.Character.Position.X, (InputArgument)Game.Player.Character.Position.Y, (InputArgument)(Game.Player.Character.Position.Z + 0.2f), (InputArgument)true, (InputArgument)0.0f, (InputArgument)0);
+
+                    foreach (int component in this.storedWeaponProps.Components)
+                        Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)carriedWeaponEntity.Handle, (InputArgument)component);
+                   
+                    
                     int num4 = Function.Call<int>(Hash.GET_PED_BONE_INDEX, new InputArgument[2]
                     {
             (InputArgument) (Entity) Game.Player.Character,
@@ -672,7 +1349,7 @@ public class Main : Script
                     if (Game.Player.Character.Armor < 1)
                         Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
                         {
-              (InputArgument) (Entity) this.WeaponOnBack,
+              (InputArgument) (Entity) this.carriedWeaponEntity,
               (InputArgument) (Entity) Game.Player.Character,
               (InputArgument) num4,
               (InputArgument) 0.075f,
@@ -691,7 +1368,7 @@ public class Main : Script
                     else
                         Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
                         {
-              (InputArgument) (Entity) this.WeaponOnBack,
+              (InputArgument) (Entity) this.carriedWeaponEntity,
               (InputArgument) (Entity) Game.Player.Character,
               (InputArgument) num4,
               (InputArgument) 0.075f,
@@ -713,42 +1390,309 @@ public class Main : Script
                 {
                     if (this.attached || Main.GetBigWeaponCount(Game.Player.Character) < 1 || (Game.Player.Character.IsClimbing || Game.Player.Character.IsVaulting || Game.Player.Character.IsSwimmingUnderWater || Game.Player.Character.IsSwimming || Game.Player.Character.IsGettingIntoVehicle || Game.Player.Character.IsJacking || !this.on) && (!Game.Player.Character.IsFalling && !Game.Player.Character.IsRagdoll || !this.on))
                         return;
-                    this.WeaponOnBack.Delete();
-                    this.WeaponOnBack = (Prop)null;
+                    if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+                    Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary | AnimationFlags.HideWeapon);
+                    Script.Wait(500);
+                    //  this.WeaponOnBack.Delete();
+                    //  this.WeaponOnBack = (Prop)null;
+                  //  if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+                  //  {
+                       // Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                       // this.carriedWeaponEntity.Delete();
+                  //  }
+                    // this.carriedWeaponEntity = (Entity)null;
+
                     this.on = false;
-                    Main.model = (Model)(string)null;
-                    Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
+                    //Main.model = (Model)(string)null;
+                    //Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
                 }
             }
             else
             {
                 if (Main.GetBigWeaponCount(Game.Player.Character) != 0 || !this.on || !this.on)
                     return;
-                this.WeaponOnBack.Delete();
-                this.WeaponOnBack = (Prop)null;
+                if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+
+                    Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary | AnimationFlags.HideWeapon);
+                Script.Wait(500);
+                //this.WeaponOnBack.Delete();
+                //this.WeaponOnBack = (Prop)null;
+            //    if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+            //    {
+                  //  Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                  //  this.carriedWeaponEntity.Delete();
+            //    }
+                //this.carriedWeaponEntity = (Entity)null;
                 this.on = false;
-                Main.model = (Model)(string)null;
-                Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
+               // Main.model = (Model)(string)null;
+                //Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
             }
         }
     }
 
-    private void MaximumWeaponCapacity2()
+
+    */
+    private void visibleWeapon2()
     {
-        if (Function.Call<bool>(Hash.IS_CUTSCENE_PLAYING, Array.Empty<InputArgument>()) || Game.IsCutsceneActive || Main.AllWeaponsCount(Game.Player.Character) <= 1)
-            return;
-        Function.Call(Hash.SET_PED_DROPS_WEAPON, Game.Player.Character);
-        
-        Wait(1000);
-       
-        
+        int num1;
+
+        if (Main.GetBigWeaponCount(Game.Player.Character) >= 1)
+            num1 = Function.Call<bool>(Hash.IS_PED_ARMED, new InputArgument[2]
+            {
+        (InputArgument) (Entity) Game.Player.Character,
+        (InputArgument) 7
+            }) ? 1 : 0;
+        else
+            num1 = 0;
+        if (num1 != 0)
+        {
+           
+
+            Weapon current = Game.Player.Character.Weapons.Current;
+
+            this.current1 = Game.Player.Character.Weapons.CurrentWeaponObject;
+            if (current1 == null) return;
+
+
+            this.attached = !current1.IsVisible;
+            if (current == null || current.Hash == WeaponHash.Unarmed)
+                return;
+            this.storedWeaponProps = new WeaponProperties()
+            {
+                Hash = current.Hash,
+                Ammo = current.Ammo,
+                TintIndex = Function.Call<int>(Hash.GET_PED_WEAPON_TINT_INDEX, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)current.Hash)
+            };
+            foreach (WeaponComponent component in current.Components)
+            {
+                if (component.Active)
+                    this.storedWeaponProps.Components.Add(component.ComponentHash);
+            }
+
+            
+
+            if (attached && !this.on && Main.GetBigWeaponCount(Game.Player.Character) >= 1 && !Game.Player.IsDead)
+            {
+
+                this.carriedWeaponEntity = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)Game.Player.Character.Position.X, (InputArgument)Game.Player.Character.Position.Y, (InputArgument)(Game.Player.Character.Position.Z + 0.2f), (InputArgument)true, (InputArgument)0.0f, (InputArgument)0);
+
+                foreach (int component in this.storedWeaponProps.Components)
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)carriedWeaponEntity.Handle, (InputArgument)component);
+
+
+                int num2 = Function.Call<int>(Hash.GET_PED_BONE_INDEX, new InputArgument[2]
+                {
+          (InputArgument) (Entity) Game.Player.Character,
+          (InputArgument) (Enum) Bone.SkelSpine3
+                });
+                if (Game.Player.Character.Armor < 1)
+                    Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
+                    {
+            (InputArgument) (Entity) this.carriedWeaponEntity,
+            (InputArgument) (Entity) Game.Player.Character,
+            (InputArgument) num2,
+            (InputArgument) 0.075f,
+            (InputArgument)(-0.15f),
+            (InputArgument)(-0.02f),
+            (InputArgument) 0.0f,
+            (InputArgument) 165f,
+            (InputArgument) 0.0f,
+            (InputArgument) true,
+            (InputArgument) true,
+            (InputArgument) false,
+            (InputArgument) true,
+            (InputArgument) 2,
+            (InputArgument) true
+                    });
+                else if (Game.Player.Character.Armor > 0)
+                    Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
+                    {
+            (InputArgument) (Entity) this.carriedWeaponEntity,
+            (InputArgument) (Entity) Game.Player.Character,
+            (InputArgument) num2,
+            (InputArgument) 0.075f,
+            (InputArgument)(0.235f),
+            (InputArgument)(-0.02f),
+            (InputArgument) 0.0f,
+            (InputArgument) 165f,
+            (InputArgument) 0.0f,
+            (InputArgument) true,
+            (InputArgument) true,
+            (InputArgument) false,
+            (InputArgument) true,
+            (InputArgument) 2,
+            (InputArgument) true
+                    });
+                this.on = true;
+            }
+            else
+            {
+                if (attached || Main.GetBigWeaponCount(Game.Player.Character) < 1 || (Game.Player.Character.IsClimbing || Game.Player.Character.IsVaulting || Game.Player.Character.IsSwimmingUnderWater || Game.Player.Character.IsSwimming || Game.Player.Character.IsGettingIntoVehicle || Game.Player.Character.IsJacking || !this.on) && (!Game.Player.Character.IsFalling && !Game.Player.Character.IsRagdoll || !this.on))
+                    return;
+                if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+                   Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary | AnimationFlags.HideWeapon);
+                Script.Wait(500);
+                //  this.WeaponOnBack.Delete();
+                //  this.WeaponOnBack = (Prop)null;
+                if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+                   {
+                  Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                  this.carriedWeaponEntity.Delete();
+                   }
+                //this.carriedWeaponEntity = (Entity)null;
+                this.on = false;
+                //Main.model = (Model)(string)null;
+                //Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
+            }
+        }
+        else
+        {
+            int num3;
+            if (Main.GetBigWeaponCount(Game.Player.Character) >= 1 && !Game.Player.Character.IsInVehicle())
+            {
+                if (Game.Player.Character.Weapons.Current.Hash != WeaponHash.Unarmed)
+                    num3 = !Function.Call<bool>(Hash.IS_PED_ARMED, new InputArgument[2]
+                    {
+            (InputArgument) (Entity) Game.Player.Character,
+            (InputArgument) 7
+                    }) ? 1 : 0;
+                else
+                    num3 = 1;
+            }
+            else
+                num3 = 0;
+            if (num3 != 0)
+            {
+                this.attached = true;
+                foreach (Main.BigWeapons bigWeapons in Enum.GetValues(typeof(Main.BigWeapons)))
+                {
+                    if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, new InputArgument[3]
+                    {
+            (InputArgument) (Entity) Game.Player.Character,
+            (InputArgument) bigWeapons.GetHashCode(),
+            (InputArgument) false
+                    }))
+                    {
+                        current = bigWeapons.GetHashCode();
+                        
+                        break;
+                    }
+                }
+                
+                if (attached && !this.on && Main.GetBigWeaponCount(Game.Player.Character) >= 1 && !Game.Player.Character.IsDead)
+                {
+                    if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+                        Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
+                    Script.Wait(500);
+                    // this.WeaponOnBack = World.CreateProp(Function.Call<Model>(Hash.GET_WEAPONTYPE_MODEL, new InputArgument[1]
+                    //    {
+                    //  (InputArgument) this.current
+                    //          }), Game.Player.Character.Position, false, false);
+
+                    this.carriedWeaponEntity = Function.Call<Entity>(Hash.CREATE_WEAPON_OBJECT, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo, (InputArgument)Game.Player.Character.Position.X, (InputArgument)Game.Player.Character.Position.Y, (InputArgument)(Game.Player.Character.Position.Z + 0.2f), (InputArgument)true, (InputArgument)0.0f, (InputArgument)0);
+
+                    foreach (int component in this.storedWeaponProps.Components)
+                        Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_WEAPON_OBJECT, (InputArgument)carriedWeaponEntity.Handle, (InputArgument)component);
+
+
+                    int num4 = Function.Call<int>(Hash.GET_PED_BONE_INDEX, new InputArgument[2]
+                    {
+            (InputArgument) (Entity) Game.Player.Character,
+            (InputArgument) (Enum) Bone.SkelSpine3
+                    });
+                    if (Game.Player.Character.Armor < 1)
+                        Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
+                        {
+              (InputArgument) (Entity) this.carriedWeaponEntity,
+              (InputArgument) (Entity) Game.Player.Character,
+              (InputArgument) num4,
+              (InputArgument) 0.075f,
+              (InputArgument)(-0.15f),
+              (InputArgument)(-0.02f),
+              (InputArgument) 0.0f,
+              (InputArgument) 165f,
+              (InputArgument) 0.0f,
+              (InputArgument) true,
+              (InputArgument) true,
+              (InputArgument) false,
+              (InputArgument) true,
+              (InputArgument) 2,
+              (InputArgument) true
+                        });
+                    else
+                        Function.Call(Hash.ATTACH_ENTITY_TO_ENTITY, new InputArgument[15]
+                        {
+              (InputArgument) (Entity) this.carriedWeaponEntity,
+              (InputArgument) (Entity) Game.Player.Character,
+              (InputArgument) num4,
+              (InputArgument) 0.075f,
+              (InputArgument) 0.235f,
+              (InputArgument)(-0.02f),
+              (InputArgument) 0.0f,
+              (InputArgument) 155f,
+              (InputArgument) 0.0f,
+              (InputArgument) true,
+              (InputArgument) true,
+              (InputArgument) false,
+              (InputArgument) true,
+              (InputArgument) 2,
+              (InputArgument) true
+                        });
+                    this.on = true;
+                }
+                else
+                {
+                    if (attached || Main.GetBigWeaponCount(Game.Player.Character) < 1 || (Game.Player.Character.IsClimbing || Game.Player.Character.IsVaulting || Game.Player.Character.IsSwimmingUnderWater || Game.Player.Character.IsSwimming || Game.Player.Character.IsGettingIntoVehicle || Game.Player.Character.IsJacking || !this.on) && (!Game.Player.Character.IsFalling && !Game.Player.Character.IsRagdoll || !this.on))
+                        return;
+                    if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+                        Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary | AnimationFlags.HideWeapon);
+                    Script.Wait(500);
+                    //  this.WeaponOnBack.Delete();
+                    //  this.WeaponOnBack = (Prop)null;
+                      if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+                      {
+                     Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                     this.carriedWeaponEntity.Delete();
+                      }
+                    // this.carriedWeaponEntity = (Entity)null;
+
+                    this.on = false;
+                    //Main.model = (Model)(string)null;
+                    //Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary);
+                }
+            }
+            else
+            {
+                if (Main.GetBigWeaponCount(Game.Player.Character) != 0 || !this.on || !this.on)
+                    return;
+                if (!Function.Call<bool>(Hash.IS_ENTITY_PLAYING_ANIM, (InputArgument)(Entity)Game.Player.Character, (InputArgument)"mp_arrest_paired", (InputArgument)"cop_p1_rf_right_0", (InputArgument)3))
+
+                    Game.Player.Character.Task.PlayAnimation("mp_arrest_paired", "cop_p1_rf_right_0", 8f, 500, AnimationFlags.UpperBodyOnly | AnimationFlags.Secondary | AnimationFlags.HideWeapon);
+                Script.Wait(500);
+                //this.WeaponOnBack.Delete();
+                //this.WeaponOnBack = (Prop)null;
+                    if (this.carriedWeaponEntity != (Entity)null && this.carriedWeaponEntity.Exists())
+                    {
+                  Function.Call(Hash.DETACH_ENTITY, (InputArgument)this.carriedWeaponEntity.Handle, (InputArgument)true, (InputArgument)true);
+                  this.carriedWeaponEntity.Delete();
+                    
+                    }
+                //this.carriedWeaponEntity = (Entity)null;
+                this.on = false;
+            }
+        }
+
     }
+
+
+
+
 
     private void RagDollWeaponDrop()
     {
         if (!Game.Player.Character.IsRagdoll)
             return;
-        Game.Player.Character.Weapons.Drop();
+        RagdollDrop();
     }
 
     private void shootDriver()
@@ -1026,6 +1970,57 @@ public class Main : Script
            0x917F6C8C, //NavyRevolver
         };
     }
+
+    List<WeaponHash> preferredWeapons = new List<WeaponHash>
+{
+WeaponHash.SMG,
+WeaponHash.SMGMk2,
+WeaponHash.AssaultSMG,
+WeaponHash.CombatPDW,
+WeaponHash.MachinePistol,
+WeaponHash.MiniSMG,
+WeaponHash.UnholyHellbringer,
+WeaponHash.TacticalSMG,
+WeaponHash.PumpShotgun,
+WeaponHash.PumpShotgunMk2,
+WeaponHash.SawnOffShotgun,
+WeaponHash.AssaultShotgun,
+WeaponHash.BullpupShotgun,
+WeaponHash.DoubleBarrelShotgun,
+WeaponHash.SweeperShotgun,
+WeaponHash.AssaultRifle,
+WeaponHash.AssaultrifleMk2,
+WeaponHash.CarbineRifle,
+WeaponHash.CarbineRifleMk2,
+WeaponHash.AdvancedRifle,
+WeaponHash.SpecialCarbine,
+WeaponHash.SpecialCarbineMk2,
+WeaponHash.BullpupRifle,
+WeaponHash.BullpupRifleMk2,
+WeaponHash.CompactRifle,
+WeaponHash.MilitaryRifle,
+WeaponHash.HeavyRifle,
+WeaponHash.MG,
+WeaponHash.CombatMG,
+WeaponHash.CombatMGMk2,
+WeaponHash.Gusenberg,
+WeaponHash.SniperRifle,
+WeaponHash.HeavySniper,
+WeaponHash.HeavySniperMk2,
+WeaponHash.MarksmanRifle,
+WeaponHash.MarksmanRifleMk2,
+WeaponHash.RPG,
+WeaponHash.GrenadeLauncher,
+WeaponHash.GrenadeLauncherSmoke,
+WeaponHash.Minigun,
+WeaponHash.Firework,
+WeaponHash.Railgun,
+WeaponHash.HomingLauncher,
+WeaponHash.CompactGrenadeLauncher,
+WeaponHash.PrecisionRifle,
+WeaponHash.Widowmaker
+};
+
     private enum AllWeapons : uint
     {
         SniperRifle = 100416529, // 0x05FC3C11
@@ -1330,6 +2325,7 @@ public class Main : Script
 
     public static class Helpers
     {
+
        // public static ScriptSettings config = ScriptSettings.Load("scripts\\Okoniewitz\\NotUselessArmor.ini");
         public static int[] Armor = new int[10]
         {
@@ -1378,4 +2374,41 @@ public class Main : Script
             });
         }
     }
+
+    public class WeaponProperties
+{
+  private WeaponHash previousSelectedWeapon = WeaponHash.Unarmed;
+
+  public WeaponHash Hash { get; set; }
+
+  public int Ammo { get; set; }
+
+  public int TintIndex { get; set; }
+
+  public int Finish { get; set; }
+
+  public List<WeaponComponentHash> Components { get; set; } = new List<WeaponComponentHash>();
+
+  public override bool Equals(object obj)
+  {
+    return obj is WeaponProperties weaponProperties && this.Hash == weaponProperties.Hash && this.Ammo == weaponProperties.Ammo && this.TintIndex == weaponProperties.TintIndex;
+  }
+
+  public override int GetHashCode()
+  {
+    return this.Hash.GetHashCode() ^ this.Ammo.GetHashCode() ^ this.TintIndex.GetHashCode();
+  }
+
+}
+    public static class InteriorUtils
+    {
+        public static int GetPlayerInteriorID()
+        {
+            Ped player = Game.Player.Character;
+            if (player == null || !player.Exists()) return -1;
+
+            return Function.Call<int>(Hash.GET_INTERIOR_FROM_ENTITY, player);
+        }
+    }
+
 }
