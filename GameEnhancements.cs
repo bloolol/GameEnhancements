@@ -655,8 +655,8 @@ public class Main : Script
             //if (!Game.Player.Character.IsAlive && weaponToAttach != null)
         //    this.weaponToAttach = (Entity)null;
 
-        if (Function.Call<bool>(Hash.IS_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character))
-            Function.Call(Hash.SET_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character, (InputArgument)false, (InputArgument)(-1), (InputArgument)"DEFAULT_ACTION");
+      //  if (Function.Call<bool>(Hash.IS_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character))
+       //     Function.Call(Hash.SET_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character, (InputArgument)false, (InputArgument)(-1), (InputArgument)"DEFAULT_ACTION");
 
         // if(!IsPlayerInTargetInterior() && Game.Player.Character.Armor == 0)
         // SwitchToFirstAvailableWeaponIfUnarmed(preferredWeapons);
