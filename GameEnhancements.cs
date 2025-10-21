@@ -6,11 +6,16 @@ using GTA.UI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 
 public class Main : Script
 {
+    private static readonly AllWeapons[] CachedWeaponHashes = (AllWeapons[])Enum.GetValues(typeof(AllWeapons));
+    private static readonly BigWeapons[] CachedBigWeaponHashes = (BigWeapons[])Enum.GetValues(typeof(BigWeapons));
+    private static readonly SmallWeapons[] CachedSmallWeaponHashes = (SmallWeapons[])Enum.GetValues(typeof(SmallWeapons));
+
     private float HealthReference;
     private float ArmorReference;
     private string LowH = "HeistCelebPassBW";
@@ -41,7 +46,7 @@ public class Main : Script
     private WeaponProperties storedWeaponProps = (WeaponProperties)null;
     private Entity carriedWeaponEntity = (Entity)null;
     //public static Weapon current = null;
-
+    private bool isPickupInProgress = false;
 
     private static readonly HashSet<int> TargetInteriorIDs = new HashSet<int>
 {
@@ -92,7 +97,8 @@ public class Main : Script
 
     private void OnTick(object sender, EventArgs e)
     {
-        
+        if (Game.IsPaused)
+            return;
         ///visibleWeapon2();
        // this.VisibleWeaponFunc();
         this.RagDollWeaponDrop();
@@ -125,18 +131,15 @@ public class Main : Script
 
     public static int GetSmallWeaponCount(Ped ped)
     {
-        int smallWeaponCount = 0;
-        foreach (Main.SmallWeapons smallWeapons in Enum.GetValues(typeof(Main.SmallWeapons)))
+        int count = 0;
+        foreach (AllWeapons weapon in CachedSmallWeaponHashes)
         {
-            if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, new InputArgument[3]
+            if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, ped.Handle, (uint)weapon, false))
             {
-        (InputArgument) ped.Handle,
-        (InputArgument) smallWeapons.GetHashCode(),
-        (InputArgument) false
-            }))
-                ++smallWeaponCount;
+                count++;
+            }
         }
-        return smallWeaponCount;
+        return count;
     }
 
     public static int GetExplosivesCount(Ped ped)
@@ -170,6 +173,36 @@ public class Main : Script
         }
         return num;
     }
+
+    public static int AllWeaponsCount2(Ped ped)
+    {
+
+
+        int count = 0;
+        foreach (AllWeapons weapon in CachedWeaponHashes)
+        {
+            if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, ped.Handle, (uint)weapon, false))
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+    public static int GetBigWeaponCount2(Ped ped)
+    {
+
+
+        int count = 0;
+        foreach (BigWeapons weapon in CachedBigWeaponHashes)
+        {
+            if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, ped.Handle, (uint)weapon, false))
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
 
     public static int GetBigWeaponCount(Ped ped)
     {
@@ -305,7 +338,7 @@ public class Main : Script
 
     private void WeaponsAreScary()
     {
-        if (Function.Call<bool>(Hash.GET_MISSION_FLAG, Array.Empty<InputArgument>()) || !Game.Player.IsPlaying || (!this.isCarryingWeaponAsProp || IsPlayerInTargetInterior()) || !Main.PED_IS_ARMED(Game.Player.Character) || !carriedWeaponEntity.Exists() || Main.PED_IS_POLICE_FORCE(Game.Player.Character) || !Main.WEAPON_IS_FIREARM(Game.Player.Character.Weapons.Current.Hash) || Game.Player.Character.IsInVehicle())
+        if (Function.Call<bool>(Hash.GET_MISSION_FLAG, Array.Empty<InputArgument>()) || !Game.Player.IsPlaying || (!this.isCarryingWeaponAsProp || IsPlayerInTargetInterior() ||( isCarryingWeaponAsProp && Game.Player.Character.IsInVehicle())) || !Main.PED_IS_ARMED(Game.Player.Character) || Main.PED_IS_POLICE_FORCE(Game.Player.Character) || !Main.WEAPON_IS_FIREARM(Game.Player.Character.Weapons.Current.Hash) || Game.Player.Character.IsInVehicle())
             return;
         foreach (Ped ped in ((IEnumerable<Ped>)World.GetNearbyPeds(Game.Player.Character, 13f)).ToList<Ped>().ToArray())
         {
@@ -358,7 +391,7 @@ public class Main : Script
             }
         }
     }
-
+    /*
     private void drunkCam()
     {
         if (!Game.Player.Character.IsAlive || Game.IsCutsceneActive || Game.IsLoading || !GameplayCamera.IsRendering)
@@ -369,15 +402,17 @@ public class Main : Script
       (InputArgument) 1f
         });
     }
-
+    */
     public Main()
     {
-       
+        if (Game.IsPaused)
+            return;
         this.Tick += new EventHandler(this.OnTick);
         this.KeyDown += new KeyEventHandler(this.DropWeapon2);
-        this.KeyDown += new KeyEventHandler(this.AttemptPickupWeapon2);
+        this.KeyDown += new KeyEventHandler(this.AttemptPickupWeapon5);
+        this.KeyUp += new KeyEventHandler(this.AntiSpam);
     }
-
+    /*
     private void DropWeapon(object sender, KeyEventArgs e)
     {
         if (e.KeyCode != Keys.K)
@@ -396,7 +431,7 @@ public class Main : Script
       (InputArgument) ammo
         });
     }
-
+    */
     private void RequestWeaponAsset(WeaponHash hash)
     {
         Function.Call(Hash.REQUEST_WEAPON_ASSET, (InputArgument)(int)hash, (InputArgument)31, (InputArgument)0);
@@ -463,7 +498,7 @@ public class Main : Script
         Function.Call(Hash.SET_PED_AMMO, (InputArgument)Game.Player.Character.Handle, (InputArgument)(int)properties.Hash, (InputArgument)properties.Ammo);
         Game.Player.Character.Weapons.Select(properties.Hash);
     }
-
+    /*
     private void Hint()
     {
 
@@ -472,7 +507,7 @@ public class Main : Script
         if ((double)Game.Player.Character.Position.DistanceTo(this.closestDroppedWeapon.Position) <= 1.3300000429153442)
         GTA.UI.Screen.ShowHelpTextThisFrame("~BLIP_INFO_ICON~  ~" + "E" + "~ Pick Up Weapon", true);
     }
-
+    */
     private void DropWeapon2(object sender, KeyEventArgs e)
     {
         if (e.KeyCode != Keys.K)
@@ -555,8 +590,19 @@ public class Main : Script
         }
         
         //character.Weapons.Select(WeaponHash.Unarmed);
-        character.Task.ClearAll();
+        //character.Task.ClearAll();
         character.Weapons.Remove(current);
+        WeaponHash weapontoselect;
+        foreach (AllWeapons weapon in CachedWeaponHashes)
+        {
+            if (Function.Call<bool>(Hash.HAS_PED_GOT_WEAPON, character.Handle, (uint)weapon, false))
+            {
+                weapontoselect = (WeaponHash)weapon;
+                character.Weapons.Select(weapontoselect);
+                break;
+            }
+        }
+        
     }
     private void RagdollDrop()
     {
@@ -600,7 +646,9 @@ public class Main : Script
 
     private void AttemptPickupWeapon2(object sender, KeyEventArgs e)
     {
-        if (e.KeyCode != Keys.E || !Game.Player.Character.IsOnFoot || Game.IsControlPressed(GTA.Control.Sprint) || (GetBigWeaponCount(Game.Player.Character) > 0 && Game.Player.Character.Weapons.Current == WeaponHash.Unarmed))
+        if (e.KeyCode != Keys.E )
+            return;
+        if (!Game.Player.Character.IsOnFoot || Game.IsControlPressed(GTA.Control.Sprint) || (GetBigWeaponCount2(Game.Player.Character) > 0 && Game.Player.Character.Weapons.Current == WeaponHash.Unarmed))
             return;
         Entity closestDroppedWeapon = this.GetClosestDroppedWeapon(Game.Player.Character.Position, 3f);
         if (closestDroppedWeapon == (Entity)null || !this.weaponProperties.ContainsKey(closestDroppedWeapon))
@@ -609,7 +657,7 @@ public class Main : Script
         }
         else
         {
-            if (Game.Player.Character.Weapons.Current != null || Main.GetBigWeaponCount(Game.Player.Character) >= 2)
+            if (Game.Player.Character.Weapons.Current != null || Main.GetBigWeaponCount2(Game.Player.Character) >= 2)
                 this.DropWeapon3();
             this.weaponToAttach = closestDroppedWeapon;
             float num1 = this.weaponToAttach.Position.Z - Function.Call<Vector3>(Hash.GET_PED_BONE_COORDS, (InputArgument)(Entity)Game.Player.Character, (InputArgument)24816, (InputArgument)0.0f, (InputArgument)0.0f, (InputArgument)0.0f).Z;
@@ -625,6 +673,108 @@ public class Main : Script
     }
 
 
+    private void AttemptPickupWeapon4(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode != Keys.E || isPickupInProgress)
+            return;
+
+        if (!Game.Player.Character.IsOnFoot || Game.IsControlPressed(GTA.Control.Sprint) ||
+            (AllWeaponsCount2(Game.Player.Character) > 0 && Game.Player.Character.Weapons.Current == WeaponHash.Unarmed))
+            return;
+         if ((Game.Player.Character.Weapons.Current != null) || Main.AllWeaponsCount2(Game.Player.Character) >= 2)
+            this.DropWeapon3();
+        isPickupInProgress = true;
+        Entity closestDroppedWeapon = this.GetClosestDroppedWeapon(Game.Player.Character.Position, 3f);
+        if (closestDroppedWeapon == null)
+        {
+            GTA.UI.Screen.ShowSubtitle("No weapon or NPC nearby to pick up.", 2000);
+        }
+        else
+        {
+            // if (Game.Player.Character.Weapons.Current != null || Main.GetBigWeaponCount2(Game.Player.Character) >= 2)
+            //this.DropWeapon3();
+
+            droppedWeapons.Add(closestDroppedWeapon);
+
+
+
+            /*
+            if (!this.droppedWeapons.Contains(closestDroppedWeapon))
+            {
+                droppedWeapons.Add(closestDroppedWeapon);
+            }
+            this.weaponToAttach = closestDroppedWeapon;
+            */
+
+
+
+            this.weaponToAttach = closestDroppedWeapon;
+
+            float num1 = this.weaponToAttach.Position.Z - Function.Call<Vector3>(
+                Hash.GET_PED_BONE_COORDS, Game.Player.Character, 24816, 0.0f, 0.0f, 0.0f).Z;
+
+            float num2 = 0.5f;
+            float num3 = 0.3353f;
+
+            if (num1 < -num2)
+                this.PlayPickupAnimation(Game.Player.Character);
+            else if (num1 > num3)
+                this.PlayHighPickupAnimation(Game.Player.Character);
+            else
+                this.PlayMidPickupAnimation(Game.Player.Character);
+
+            
+        }
+    }
+
+    private void AttemptPickupWeapon5(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode != Keys.E || isPickupInProgress)
+            return;
+
+        if (!Game.Player.Character.IsOnFoot || Game.IsControlPressed(GTA.Control.Sprint) ||
+            (GetBigWeaponCount(Game.Player.Character) > 0 && Game.Player.Character.Weapons.Current == WeaponHash.Unarmed))
+            return;
+        isPickupInProgress = true;
+        Entity closestDroppedWeapon = this.GetClosestDroppedWeapon(Game.Player.Character.Position, 3f);
+        if (closestDroppedWeapon == null || !this.weaponProperties.ContainsKey(closestDroppedWeapon))
+        {
+            GTA.UI.Screen.ShowSubtitle("No weapon or NPC nearby to pick up.", 2000);
+        }
+        else
+        {
+            droppedWeapons.Add(closestDroppedWeapon); //testing this statement
+            if (Game.Player.Character.Weapons.Current != null || Main.GetBigWeaponCount(Game.Player.Character) >= 2)
+                this.DropWeapon3();
+
+            this.weaponToAttach = closestDroppedWeapon;
+
+            float num1 = this.weaponToAttach.Position.Z - Function.Call<Vector3>(
+                Hash.GET_PED_BONE_COORDS, Game.Player.Character, 24816, 0.0f, 0.0f, 0.0f).Z;
+
+            float num2 = 0.5f;
+            float num3 = 0.3353f;
+
+            if (num1 < -num2)
+                this.PlayPickupAnimation(Game.Player.Character);
+            else if (num1 > num3)
+                this.PlayHighPickupAnimation(Game.Player.Character);
+            else
+                this.PlayMidPickupAnimation(Game.Player.Character);
+
+
+        }
+    }
+
+
+    private void AntiSpam(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.E)
+            isPickupInProgress = false;
+    }
+
+
+
     private void weaponPickupTick()
     {
         if (this.weaponToAttach != (Entity)null)
@@ -637,31 +787,31 @@ public class Main : Script
             this.weaponToAttach = (Entity)null;
             Game.Player.Character.Task.ClearAll();
         }
-        if (AllWeaponsCount(Game.Player.Character) > 1)
+        if (AllWeaponsCount2(Game.Player.Character) > 1)
         {
                 DropWeapon3();
         }
-        if (GetBigWeaponCount(Game.Player.Character) > 0 && Game.Player.Character.Armor == 0 && Game.Player.Character.Weapons.Current != WeaponHash.Unarmed && !IsPlayerInTargetInterior())
-        {
+        //if (GetBigWeaponCount(Game.Player.Character) > 0 && Game.Player.Character.Armor == 0 && Game.Player.Character.Weapons.Current != WeaponHash.Unarmed && !IsPlayerInTargetInterior())
+        //{
 
             //Function.Call(Hash.SET_CAN_PED_SELECT_INVENTORY_WEAPON, (InputArgument)Game.Player.Character, (InputArgument)WeaponHash.Unarmed, (InputArgument)false);
            // Game.Player.Character.CanSwitchWeapons = false;
-        }
-        else
-        {
+        //}
+        //else
+        //{
           // Game.Player.Character.CanSwitchWeapons = true;
            // Function.Call(Hash.SET_CAN_PED_SELECT_INVENTORY_WEAPON, (InputArgument)Game.Player.Character, (InputArgument)WeaponHash.Unarmed, (InputArgument)true);
-        }
+        //}
             //if (!Game.Player.Character.IsAlive && weaponToAttach != null)
         //    this.weaponToAttach = (Entity)null;
 
-      //  if (Function.Call<bool>(Hash.IS_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character))
-       //     Function.Call(Hash.SET_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character, (InputArgument)false, (InputArgument)(-1), (InputArgument)"DEFAULT_ACTION");
+        if (Function.Call<bool>(Hash.IS_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character))
+            Function.Call(Hash.SET_PED_USING_ACTION_MODE, (InputArgument)Game.Player.Character, (InputArgument)false, (InputArgument)(-1), (InputArgument)"DEFAULT_ACTION");
 
         // if(!IsPlayerInTargetInterior() && Game.Player.Character.Armor == 0)
         // SwitchToFirstAvailableWeaponIfUnarmed(preferredWeapons);
 
-        if (GetBigWeaponCount(Game.Player.Character) > 0)
+        if (GetBigWeaponCount2(Game.Player.Character) > 0)
             {
                 if (!Game.IsControlJustPressed(GTA.Control.Context))
                 {
@@ -727,7 +877,7 @@ public class Main : Script
                 this.storedWeaponProps.Components.Add(component.ComponentHash);
         }
     }
-
+    /*
     public static void SwitchToFirstAvailableWeaponIfUnarmed(List<WeaponHash> weaponList)
     {
         Ped player = Game.Player.Character;
@@ -748,7 +898,7 @@ public class Main : Script
 
         GTA.UI.Screen.ShowSubtitle("No weapons from list found in inventory.");
     }
-
+    */
 
     public static bool IsPlayerInTargetInterior()
     {
@@ -947,6 +1097,7 @@ public class Main : Script
 
 
     }
+    /*
     private void firstPersonTransitionFX()
     {
         if (Game.Player.Character.IsSittingInVehicle())
@@ -981,7 +1132,7 @@ public class Main : Script
             this.Camera = Function.Call<int>(Hash.GET_FOLLOW_PED_CAM_VIEW_MODE, new InputArgument[0]);
         }
     }
-
+    */
     private void ToggleCarryModeOn()
     {
         if (Function.Call<bool>(Hash.IS_PED_GETTING_INTO_A_VEHICLE, (InputArgument)Game.Player.Character) || Game.Player.Character.IsInVehicle())
@@ -1064,8 +1215,8 @@ public class Main : Script
                     }
                 this.isCarryingWeaponAsProp = true;
                 IsCarryingWeaponAsProp = true;
-                
-                Notification.PostTicker("~r~Weapon~w~ is now in ~b~C~r~a~y~r~w~r~g~y~b~ M~g~o~y~d~b~e.", true, false);
+                if (Game.Player.Character.IsAlive)
+                    Notification.PostTicker("~r~Weapon~w~ is now in ~b~C~r~a~y~r~w~r~g~y~b~ M~g~o~y~d~b~e.", true, false);
             }
         }
     }
@@ -1098,14 +1249,14 @@ public class Main : Script
             }
             this.isCarryingWeaponAsProp = false;
             IsCarryingWeaponAsProp = false;
-            if (Game.Player.Character.IsAlive || !Game.Player.Character.IsInVehicle())
+            if (Game.Player.Character.IsAlive)
             Notification.PostTicker("~r~Weapon~w~ re-equipped ~b~n~r~o~y~r~w~m~g~a~y~l~w~l~r~y~b~.", true, false);
             
 
         }
     }
 
-
+    /*
     private void ToggleCarryMode()
     {
         Ped character = Game.Player.Character;
@@ -1162,7 +1313,7 @@ public class Main : Script
                 if (this.storedWeaponProps.Finish != 0)
                     Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Finish);
                 Function.Call(Hash.SET_PED_AMMO, (InputArgument)character.Handle, (InputArgument)(int)this.storedWeaponProps.Hash, (InputArgument)this.storedWeaponProps.Ammo);
-                */
+                *//*
                 character.Weapons.Select(this.storedWeaponProps.Hash);
             }
             this.isCarryingWeaponAsProp = false;
@@ -1170,7 +1321,7 @@ public class Main : Script
             Notification.PostTicker("Weapon re‑equipped normally.", true, false);
         }
     }
-
+*/
     private void RequestWeaponAssetInternal(WeaponHash hash)
     {
         Function.Call(Hash.REQUEST_WEAPON_ASSET, (InputArgument)(int)hash, (InputArgument)31, (InputArgument)0);
@@ -1432,6 +1583,7 @@ public class Main : Script
 
 
     */
+    /*
     private void visibleWeapon2()
     {
         int num1;
@@ -1685,12 +1837,12 @@ public class Main : Script
     }
 
 
-
+    */
 
 
     private void RagDollWeaponDrop()
     {
-        if (!Game.Player.Character.IsRagdoll)
+        if (!Game.Player.Character.IsRagdoll || Game.Player.IsDead)
             return;
         RagdollDrop();
     }
