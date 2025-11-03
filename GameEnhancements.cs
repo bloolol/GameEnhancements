@@ -112,6 +112,9 @@ public class Main : Script
         this.GiveWeaponToOthers();
        // this.Hint();
         this.weaponPickupTick();
+
+        shootDriver();
+        lockstreetcardoors();
     }
     public static int GetMeleeCount(Ped ped)
     {
@@ -558,6 +561,8 @@ public class Main : Script
         Weapon current = character.Weapons.Current;
         if (current == null || current.Hash == WeaponHash.Unarmed)
             return;
+       // if (current.Hash == WeaponHash.PetrolCan)
+          //  goto label_102;
         Function.Call(Hash.REQUEST_ANIM_DICT, (InputArgument)"anim@heists@narcotics@trash");
         while (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, (InputArgument)"anim@heists@narcotics@trash"))
             Script.Wait(50);
@@ -726,7 +731,7 @@ public class Main : Script
             
         }
     }
-
+    /*
     private void AttemptPickupWeapon5(object sender, KeyEventArgs e)
     {
         if (e.KeyCode != Keys.E || isPickupInProgress)
@@ -745,6 +750,45 @@ public class Main : Script
         {
             droppedWeapons.Add(closestDroppedWeapon); //testing this statement
             if (Game.Player.Character.Weapons.Current != null || Main.GetBigWeaponCount(Game.Player.Character) >= 2)
+                this.DropWeapon3();
+
+            this.weaponToAttach = closestDroppedWeapon;
+
+            float num1 = this.weaponToAttach.Position.Z - Function.Call<Vector3>(
+                Hash.GET_PED_BONE_COORDS, Game.Player.Character, 24816, 0.0f, 0.0f, 0.0f).Z;
+
+            float num2 = 0.5f;
+            float num3 = 0.3353f;
+
+            if (num1 < -num2)
+                this.PlayPickupAnimation(Game.Player.Character);
+            else if (num1 > num3)
+                this.PlayHighPickupAnimation(Game.Player.Character);
+            else
+                this.PlayMidPickupAnimation(Game.Player.Character);
+
+
+        }
+    }
+    */
+    private void AttemptPickupWeapon5(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode != Keys.E || isPickupInProgress)
+            return;
+
+        if (!Game.Player.Character.IsOnFoot || Game.IsControlPressed(GTA.Control.Sprint) ||
+            (AllWeaponsCount2(Game.Player.Character) > 0 && Game.Player.Character.Weapons.Current == WeaponHash.Unarmed))
+            return;
+        isPickupInProgress = true;
+        Entity closestDroppedWeapon = this.GetClosestDroppedWeapon(Game.Player.Character.Position, 3f);
+        if (closestDroppedWeapon == null || !this.weaponProperties.ContainsKey(closestDroppedWeapon))
+        {
+            GTA.UI.Screen.ShowSubtitle("No weapon or NPC nearby to pick up.", 2000);
+        }
+        else
+        {
+            droppedWeapons.Add(closestDroppedWeapon); //testing this statement
+            if (Game.Player.Character.Weapons.Current != null || Main.AllWeaponsCount2(Game.Player.Character) >= 2)
                 this.DropWeapon3();
 
             this.weaponToAttach = closestDroppedWeapon;
@@ -1847,40 +1891,211 @@ public class Main : Script
         RagdollDrop();
     }
 
-    private void shootDriver()
+    private readonly Random rng = new Random();
+    /*
+    private void lockstreetcardoors()
     {
-        if (!Game.Player.Character.IsGettingIntoVehicle)
-            return;
-        Vehicle vehicleTryingToEnter = Game.Player.Character.VehicleTryingToEnter;
-        VehicleSeat seat = (VehicleSeat)Function.Call<int>(Hash.GET_SEAT_PED_IS_TRYING_TO_ENTER, new InputArgument[1]
+        Ped player = Game.Player.Character;
+
+        // Only proceed if the player is on foot
+        if (!player.IsInVehicle())
         {
-      (InputArgument) (Entity) Game.Player.Character
-        });
-        Ped pedOnSeat = vehicleTryingToEnter.GetPedOnSeat(seat);
-        if (Game.Player.Character.Weapons.Current.Hash != WeaponHash.Unarmed && Game.IsControlJustPressed(GTA.Control.Attack) && pedOnSeat.IsAlive)
-        {
-            Game.Player.Character.Accuracy = 100;
-            Vector3 vector3 = Function.Call<Vector3>(Hash.GET_PED_BONE_COORDS, new InputArgument[2]
+            Vehicle[] nearbyVehicles = World.GetNearbyVehicles(player.Position, 2.5f);
+
+            foreach (Vehicle veh in nearbyVehicles)
             {
-        (InputArgument) (Entity) pedOnSeat,
-        (InputArgument) (Enum) Bone.IKHead
-            });
-            Function.Call(Hash.SET_PED_SHOOTS_AT_COORD, new InputArgument[5]
-            {
-        (InputArgument) (Entity) Game.Player.Character,
-        (InputArgument) vector3.X,
-        (InputArgument) vector3.Y,
-        (InputArgument) vector3.Z,
-        (InputArgument) true
-            });
-            Script.Wait(500);
-            if (pedOnSeat.IsDead)
-            {
-                Game.Player.Character.Task.ClearAllImmediately();
-                Game.Player.Character.Task.EnterVehicle(vehicleTryingToEnter, VehicleSeat.Driver, 2000, 1f , EnterVehicleFlags.None);
+                if (veh != null &&
+                    veh.Exists() &&
+                    !veh.IsDead &&
+                    veh.IsDriveable &&
+                     
+                    !veh.Model.IsBike &&
+                    !veh.Model.IsBoat &&
+                    !veh.Model.IsQuadBike &&
+                    !veh.Model.IsTrain)
+                {
+                    Ped driver = veh.GetPedOnSeat(VehicleSeat.Driver);
+
+                    if (driver != null &&
+                        driver.Exists() &&
+                        !driver.IsDead &&
+                        driver != player)
+                    {
+                        bool shouldLock = rng.NextDouble() < 0.9;
+                        Function.Call(Hash.SET_VEHICLE_DOORS_LOCKED, veh.Handle, shouldLock ? 2 : 1);
+                    }
+                }
             }
         }
     }
+    */
+    private void lockstreetcardoors()
+    {
+        Ped player = Game.Player.Character;
+
+        // Only proceed if the player is on foot
+        if (!player.IsInVehicle())
+        {
+            Vehicle[] nearbyVehicles = World.GetNearbyVehicles(player.Position, 2.5f);
+
+            foreach (Vehicle veh in nearbyVehicles)
+            {
+                if (veh != null &&
+                    veh.Exists() &&
+                    !veh.IsDead &&
+                    veh.IsDriveable &&
+                    !veh.Model.IsBike &&
+                    !veh.Model.IsBoat &&
+                    !veh.Model.IsQuadBike &&
+                    !veh.Model.IsTrain)
+                {
+                    // Get the seat the player is trying to enter
+                    VehicleSeat targetSeat = player.SeatIndex;
+
+                    // Map seat to door index
+                    VehicleDoorIndex targetDoor = VehicleDoorIndex.FrontLeftDoor;
+                    switch (targetSeat)
+                    {
+                        case VehicleSeat.Passenger:
+                            targetDoor = VehicleDoorIndex.FrontRightDoor;
+                            break;
+                        case VehicleSeat.LeftRear:
+                            targetDoor = VehicleDoorIndex.BackLeftDoor;
+                            break;
+                        case VehicleSeat.RightRear:
+                            targetDoor = VehicleDoorIndex.BackRightDoor;
+                            break;
+                    }
+
+                    // Skip if the target door is open
+                    if (veh.Doors[targetDoor]?.IsOpen == true)
+                        continue;
+
+                    Ped driver = veh.GetPedOnSeat(VehicleSeat.Driver);
+
+                    if (driver != null &&
+                        driver.Exists() &&
+                        !driver.IsDead &&
+                        driver != player)
+                    {
+                        bool shouldLock = rng.NextDouble() < 0.9;
+                        Function.Call(Hash.SET_VEHICLE_DOORS_LOCKED, veh.Handle, shouldLock ? 2 : 1);
+                    }
+                }
+            }
+        }
+    }
+
+
+
+
+    /*
+        private void lockstreetcardoors()
+        {
+            Ped player = Game.Player.Character;
+
+            // Only proceed if the player is on foot
+            if (!player.IsInVehicle())
+            {
+                Vehicle[] nearbyVehicles = World.GetNearbyVehicles(player.Position, 2.5f);
+
+                foreach (Vehicle veh in nearbyVehicles)
+                {
+                    if (veh != null && veh.Exists() && !veh.IsDead && veh.IsDriveable)
+                    {
+                        Ped driver = veh.GetPedOnSeat(VehicleSeat.Driver);
+
+                        if (driver != null && driver.Exists() && !driver.IsDead && driver != player)
+                        {
+                            bool shouldLock = rng.NextDouble() < 0.9;
+                            Function.Call(Hash.SET_VEHICLE_DOORS_LOCKED, veh.Handle, shouldLock ? 2 : 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        */
+    /*
+    private void lockstreetcardoors()
+    {
+
+        Ped player = Game.Player.Character;
+        Vehicle[] nearbyVehicles = World.GetNearbyVehicles(player, 100f); // Adjust radius as needed
+
+        foreach (Vehicle veh in nearbyVehicles)
+        {
+            if (veh != null && veh.Exists() && !veh.IsDead && veh.IsDriveable)
+            {
+                Ped driver = veh.GetPedOnSeat(VehicleSeat.Driver);
+
+                if (driver != null && driver.Exists() && !driver.IsDead && driver != player)
+                {
+                    bool shouldLock = rng.NextDouble() < 0.9;
+
+
+                    Function.Call(Hash.SET_VEHICLE_DOORS_LOCKED, veh.Handle, shouldLock ? 2 : 1);
+                }
+            }
+        }
+
+    }*/
+    private void shootDriver()
+    {
+        // Exit early if the player isn't trying to enter a vehicle
+        if (!Game.Player.Character.IsGettingIntoVehicle)
+            return;
+
+        Vehicle vehicleTryingToEnter = Game.Player.Character.VehicleTryingToEnter;
+        if (vehicleTryingToEnter == null)
+            return;
+
+        Ped driver = vehicleTryingToEnter.Driver;
+        if (driver == null || driver == Game.Player.Character)
+            return;
+
+        // Get the seat the player is trying to enter
+        VehicleSeat seat = (VehicleSeat)Function.Call<int>(
+            Hash.GET_SEAT_PED_IS_TRYING_TO_ENTER,
+            Game.Player.Character
+        );
+
+        Ped pedOnSeat = vehicleTryingToEnter.GetPedOnSeat(seat);
+        if (pedOnSeat == null || !pedOnSeat.Exists() || pedOnSeat == Game.Player.Character || !pedOnSeat.IsAlive)
+            return;
+
+        // Check if the player is armed and attacking
+        if (Game.Player.Character.Weapons.Current.Hash != WeaponHash.Unarmed &&
+            Game.IsControlJustPressed(GTA.Control.Attack))
+        {
+            Game.Player.Character.Accuracy = 100;
+
+            Vector3 targetHead = Function.Call<Vector3>(
+                Hash.GET_PED_BONE_COORDS,
+                pedOnSeat,
+                Bone.IKHead
+            );
+
+            Function.Call(
+                Hash.SET_PED_SHOOTS_AT_COORD,
+                Game.Player.Character,
+                targetHead.X,
+                targetHead.Y,
+                targetHead.Z,
+                true
+            );
+
+            Script.Wait(500);
+
+            // Optional: re-enter vehicle if driver is dead
+            // if (pedOnSeat.IsDead)
+            // {
+            //     Game.Player.Character.Task.ClearAllImmediately();
+            //     Game.Player.Character.Task.EnterVehicle(vehicleTryingToEnter, VehicleSeat.Driver, 2000, 1f, EnterVehicleFlags.None);
+            // }
+        }
+    }
+
 
     private void RemoveWeaponsWhenDead()
     {
